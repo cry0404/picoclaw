@@ -440,6 +440,20 @@ func registerSharedTools(
 		} else if (spawnEnabled || spawnStatusEnabled) && !cfg.Tools.IsToolEnabled("subagent") {
 			logger.WarnCF("agent", "spawn/spawn_status tools require subagent to be enabled", nil)
 		}
+
+		// Register delegate tool for multi-agent setups.
+		// Delegation uses the SubTurn mechanism directly (not SubagentManager),
+		// so it does not depend on the subagent tool being enabled.
+		if cfg.Tools.IsToolEnabled("delegate") && len(registry.ListAgentIDs()) > 1 {
+			delegateTool := tools.NewDelegateTool()
+			delegateTool.SetSpawner(NewSubTurnSpawner(al))
+			currentAgentID := agentID
+			delegateTool.SetSelfAgentID(currentAgentID)
+			delegateTool.SetAllowlistChecker(func(targetAgentID string) bool {
+				return registry.CanSpawnSubagent(currentAgentID, targetAgentID)
+			})
+			agent.Tools.Register(delegateTool)
+		}
 	}
 }
 
