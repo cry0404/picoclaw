@@ -38,10 +38,12 @@ func DefaultConfig() *Config {
 					Enabled:       false,
 					MaxArgsLength: 300,
 				},
-				SplitOnMarker: false,
-			},
+			SplitOnMarker:          false,
+			MaxLLMRetries:          2,
+			LLMRetryBackoffSecs:    2,
 		},
-		Session: SessionConfig{
+	},
+	Session: SessionConfig{
 			Dimensions: []string{"chat"},
 		},
 		Channels: defaultChannels(),
