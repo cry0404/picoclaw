@@ -5190,6 +5190,7 @@ func TestParallelMessageProcessing_SameSessionProcessedSequentially(t *testing.T
 	var mu sync.Mutex
 	turnIDs := make(map[string]bool)
 	var wg sync.WaitGroup
+	var firstResponse sync.Once
 	wg.Add(1) // Only 1 turn should be created for same session
 
 	cfg := &config.Config{
@@ -5212,7 +5213,9 @@ func TestParallelMessageProcessing_SameSessionProcessedSequentially(t *testing.T
 
 	al := NewAgentLoop(cfg, msgBus, &concurrentMockProvider{
 		responseFunc: func(callID int) string {
-			wg.Done()
+			firstResponse.Do(func() {
+				wg.Done()
+			})
 			return "ok"
 		},
 	})

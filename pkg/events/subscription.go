@@ -102,6 +102,7 @@ type eventSubscription struct {
 	mu        sync.RWMutex
 	closed    bool
 	wg        sync.WaitGroup
+	blockWG   sync.WaitGroup
 
 	counters subscriberCounters
 }
@@ -278,6 +279,9 @@ func (s *eventSubscription) closeInput() {
 		close(s.closing)
 		s.mu.Lock()
 		s.closed = true
+		s.mu.Unlock()
+		s.blockWG.Wait()
+		s.mu.Lock()
 		close(s.ch)
 		s.mu.Unlock()
 		if s.handler == nil {
@@ -304,6 +308,10 @@ func (s *eventSubscription) enqueue(ctx context.Context, evt Event) deliveryResu
 		ctx = context.Background()
 	}
 
+	if s.opts.Backpressure == Block {
+		return s.enqueueBlocking(ctx, evt)
+	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -316,11 +324,23 @@ func (s *eventSubscription) enqueue(ctx context.Context, evt Event) deliveryResu
 	switch s.opts.Backpressure {
 	case DropOldest:
 		return s.enqueueDropOldest(evt)
-	case Block:
-		return s.enqueueBlock(ctx, evt)
 	default:
 		return s.enqueueDropNewest(evt)
 	}
+}
+
+func (s *eventSubscription) enqueueBlocking(ctx context.Context, evt Event) deliveryResult {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return deliveryResult{closed: true}
+	}
+	s.blockWG.Add(1)
+	s.counters.received.Add(1)
+	s.mu.Unlock()
+
+	defer s.blockWG.Done()
+	return s.enqueueBlock(ctx, evt)
 }
 
 func (s *eventSubscription) enqueueDropNewest(evt Event) deliveryResult {

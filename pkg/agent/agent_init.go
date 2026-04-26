@@ -75,7 +75,7 @@ func NewAgentLoop(
 		al.runtimeEvents = runtimeevents.NewBus()
 		al.ownsRuntimeEvents = true
 	}
-	al.runtimeEventLogSub = subscribeRuntimeEventLogger(cfg, al.runtimeEvents)
+	al.refreshRuntimeEventLogger(cfg)
 	al.providerFactory = providers.CreateProviderFromConfig
 	al.hooks = NewHookManager(al.runtimeEvents.Channel())
 	configureHookManagerFromConfig(al.hooks, cfg)

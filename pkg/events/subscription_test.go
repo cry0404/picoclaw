@@ -63,6 +63,65 @@ func TestUnsubscribeClosesChannel(t *testing.T) {
 	waitForSubscriptionDone(t, sub)
 }
 
+func TestBlockBackpressureCloseUnblocksPublisher(t *testing.T) {
+	t.Parallel()
+
+	bus := NewBus()
+	defer closeBus(t, bus)
+
+	sub, _, err := bus.Channel().SubscribeChan(context.Background(), SubscribeOptions{
+		Name:         "block-close",
+		Buffer:       1,
+		Backpressure: Block,
+	})
+	if err != nil {
+		t.Fatalf("SubscribeChan failed: %v", err)
+	}
+
+	first := bus.Publish(context.Background(), Event{Kind: Kind("test.first")})
+	if first.Delivered != 1 {
+		t.Fatalf("first Publish = %+v, want one delivered event", first)
+	}
+
+	publishStarted := make(chan struct{})
+	publishReturned := make(chan PublishResult, 1)
+	go func() {
+		close(publishStarted)
+		publishReturned <- bus.Publish(context.Background(), Event{Kind: Kind("test.second")})
+	}()
+
+	<-publishStarted
+	waitForStat(t, func() uint64 {
+		return sub.Stats().Received
+	}, 2)
+	select {
+	case result := <-publishReturned:
+		t.Fatalf("blocking Publish returned before close: %+v", result)
+	default:
+	}
+
+	closeReturned := make(chan error, 1)
+	go func() {
+		closeReturned <- sub.Close()
+	}()
+
+	select {
+	case err := <-closeReturned:
+		if err != nil {
+			t.Fatalf("Close failed: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for Close to unblock")
+	}
+
+	select {
+	case <-publishReturned:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for blocking Publish to return after close")
+	}
+	waitForSubscriptionDone(t, sub)
+}
+
 func TestHandlerPanicRecovered(t *testing.T) {
 	t.Parallel()
 

@@ -1,8 +1,12 @@
 package agent
 
 import (
+	"context"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/config"
 	runtimeevents "github.com/sipeed/picoclaw/pkg/events"
 )
@@ -95,5 +99,135 @@ func TestRuntimeEventLogFieldsSummarizeAgentPayload(t *testing.T) {
 	}
 	if _, ok := fields["payload"]; ok {
 		t.Fatalf("raw payload should not be included by runtimeEventLogFields: %#v", fields)
+	}
+}
+
+func runtimeEventLoggerStateForTest(
+	al *AgentLoop,
+) (*runtimeEventLogger, runtimeevents.Subscription) {
+	al.runtimeEventLogMu.RLock()
+	defer al.runtimeEventLogMu.RUnlock()
+	return al.runtimeEventLogger, al.runtimeEventLogSub
+}
+
+func TestReloadProviderAndConfigRefreshesRuntimeEventLogger(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Agents.Defaults.Workspace = t.TempDir()
+	cfg.Events.Logging.Include = []string{"agent.*"}
+
+	al := NewAgentLoop(cfg, bus.NewMessageBus(), &mockProvider{})
+	defer al.Close()
+
+	eventLogger, logSub := runtimeEventLoggerStateForTest(al)
+	if eventLogger == nil || logSub == nil {
+		t.Fatal("expected initial runtime event logger subscription")
+	}
+	if eventLogger.shouldLog(runtimeevents.Event{
+		Kind:     runtimeevents.KindGatewayReloadCompleted,
+		Severity: runtimeevents.SeverityInfo,
+	}) {
+		t.Fatal("initial agent-only logging should not log gateway reload events")
+	}
+
+	reloaded := config.DefaultConfig()
+	reloaded.Agents.Defaults.Workspace = cfg.Agents.Defaults.Workspace
+	reloaded.Events.Logging.Include = []string{"gateway.*"}
+	if err := al.ReloadProviderAndConfig(context.Background(), &mockProvider{}, reloaded); err != nil {
+		t.Fatalf("ReloadProviderAndConfig() error = %v", err)
+	}
+
+	eventLogger, logSub = runtimeEventLoggerStateForTest(al)
+	if eventLogger == nil || logSub == nil {
+		t.Fatal("expected runtime event logger subscription after reload")
+	}
+	if !eventLogger.shouldLog(runtimeevents.Event{
+		Kind:     runtimeevents.KindGatewayReloadCompleted,
+		Severity: runtimeevents.SeverityInfo,
+	}) {
+		t.Fatal("reloaded gateway logging should log gateway reload events")
+	}
+	if eventLogger.shouldLog(runtimeevents.Event{
+		Kind:     runtimeevents.KindAgentTurnStart,
+		Severity: runtimeevents.SeverityInfo,
+	}) {
+		t.Fatal("reloaded gateway-only logging should not log agent events")
+	}
+
+	disabled := config.DefaultConfig()
+	disabled.Agents.Defaults.Workspace = cfg.Agents.Defaults.Workspace
+	disabled.Events.Logging.Enabled = false
+	if err := al.ReloadProviderAndConfig(context.Background(), &mockProvider{}, disabled); err != nil {
+		t.Fatalf("ReloadProviderAndConfig() with disabled logging error = %v", err)
+	}
+	eventLogger, logSub = runtimeEventLoggerStateForTest(al)
+	if eventLogger != nil || logSub != nil {
+		t.Fatal("expected runtime event logger to be disabled after reload")
+	}
+}
+
+func TestCloseRuntimeEventLoggerSubscriptionWaitsForDrain(t *testing.T) {
+	eventBus := runtimeevents.NewBus()
+	defer func() {
+		if err := eventBus.Close(); err != nil {
+			t.Fatalf("Close failed: %v", err)
+		}
+	}()
+
+	var handled atomic.Uint64
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	sub, err := eventBus.Channel().Subscribe(
+		context.Background(),
+		runtimeevents.SubscribeOptions{
+			Name:        "runtime-event-logger",
+			Buffer:      2,
+			Concurrency: runtimeevents.Locked,
+		},
+		func(context.Context, runtimeevents.Event) error {
+			if handled.Add(1) == 1 {
+				close(firstStarted)
+				<-releaseFirst
+			}
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("Subscribe failed: %v", err)
+	}
+
+	first := eventBus.Publish(context.Background(), runtimeevents.Event{Kind: runtimeevents.Kind("test.first")})
+	if first.Delivered != 1 {
+		t.Fatalf("first Publish = %+v, want one delivered event", first)
+	}
+	select {
+	case <-firstStarted:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for first handler to start")
+	}
+	second := eventBus.Publish(context.Background(), runtimeevents.Event{Kind: runtimeevents.Kind("test.second")})
+	if second.Delivered != 1 {
+		t.Fatalf("second Publish = %+v, want one delivered event", second)
+	}
+
+	closeReturned := make(chan struct{})
+	go func() {
+		closeRuntimeEventLoggerSubscription(sub)
+		close(closeReturned)
+	}()
+
+	select {
+	case <-closeReturned:
+		t.Fatal("runtime event logger close returned before buffered events drained")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(releaseFirst)
+	select {
+	case <-closeReturned:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for runtime event logger close to return")
+	}
+	if got := handled.Load(); got != 2 {
+		t.Fatalf("handled = %d, want 2", got)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/config"
@@ -12,20 +13,85 @@ import (
 	"github.com/sipeed/picoclaw/pkg/logger"
 )
 
-const runtimeEventLoggerBuffer = 256
+const (
+	runtimeEventLoggerBuffer       = 256
+	runtimeEventLoggerDrainTimeout = 2 * time.Second
+)
 
 type runtimeEventLogger struct {
+	mu  sync.RWMutex
 	cfg config.EventLoggingConfig
 }
 
-func subscribeRuntimeEventLogger(cfg *config.Config, eventBus runtimeevents.Bus) runtimeevents.Subscription {
-	eventLogger := newRuntimeEventLogger(cfg)
-	sub, err := eventLogger.subscribe(context.Background(), eventBus)
+func (al *AgentLoop) refreshRuntimeEventLogger(cfg *config.Config) {
+	if al == nil {
+		return
+	}
+	logCfg := config.EffectiveEventLoggingConfig(cfg)
+
+	al.runtimeEventLogMu.Lock()
+	if !logCfg.Enabled {
+		oldSub := al.runtimeEventLogSub
+		al.runtimeEventLogger = nil
+		al.runtimeEventLogSub = nil
+		al.runtimeEventLogMu.Unlock()
+		closeRuntimeEventLoggerSubscription(oldSub)
+		return
+	}
+
+	if al.runtimeEventLogger != nil && al.runtimeEventLogSub != nil {
+		al.runtimeEventLogger.updateConfig(logCfg)
+		al.runtimeEventLogMu.Unlock()
+		return
+	}
+	al.runtimeEventLogMu.Unlock()
+
+	eventLogger := newRuntimeEventLoggerFromConfig(logCfg)
+	sub, err := eventLogger.subscribe(context.Background(), al.runtimeEvents)
 	if err != nil {
 		logger.WarnCF("events", "Failed to subscribe runtime event logger", map[string]any{"error": err.Error()})
-		return nil
+		return
 	}
-	return sub
+
+	al.runtimeEventLogMu.Lock()
+	oldSub := al.runtimeEventLogSub
+	al.runtimeEventLogger = eventLogger
+	al.runtimeEventLogSub = sub
+	al.runtimeEventLogMu.Unlock()
+	closeRuntimeEventLoggerSubscription(oldSub)
+}
+
+func (al *AgentLoop) closeRuntimeEventLogger() {
+	if al == nil {
+		return
+	}
+	al.runtimeEventLogMu.Lock()
+	oldSub := al.runtimeEventLogSub
+	al.runtimeEventLogger = nil
+	al.runtimeEventLogSub = nil
+	al.runtimeEventLogMu.Unlock()
+	closeRuntimeEventLoggerSubscription(oldSub)
+}
+
+func closeRuntimeEventLoggerSubscription(sub runtimeevents.Subscription) {
+	if sub == nil {
+		return
+	}
+	if err := sub.Close(); err != nil {
+		logger.WarnCF("events", "Failed to close runtime event logger subscription", map[string]any{
+			"error": err.Error(),
+		})
+	}
+
+	timer := time.NewTimer(runtimeEventLoggerDrainTimeout)
+	defer timer.Stop()
+	select {
+	case <-sub.Done():
+	case <-timer.C:
+		logger.WarnCF("events", "Timed out waiting for runtime event logger to drain", map[string]any{
+			"timeout": runtimeEventLoggerDrainTimeout.String(),
+		})
+	}
 }
 
 func newRuntimeEventLogger(cfg *config.Config) *runtimeEventLogger {
@@ -33,7 +99,29 @@ func newRuntimeEventLogger(cfg *config.Config) *runtimeEventLogger {
 	if !logCfg.Enabled {
 		return nil
 	}
+	return newRuntimeEventLoggerFromConfig(logCfg)
+}
+
+func newRuntimeEventLoggerFromConfig(logCfg config.EventLoggingConfig) *runtimeEventLogger {
 	return &runtimeEventLogger{cfg: logCfg}
+}
+
+func (l *runtimeEventLogger) updateConfig(cfg config.EventLoggingConfig) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	l.cfg = cfg
+	l.mu.Unlock()
+}
+
+func (l *runtimeEventLogger) configSnapshot() config.EventLoggingConfig {
+	if l == nil {
+		return config.EventLoggingConfig{}
+	}
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.cfg
 }
 
 func (l *runtimeEventLogger) subscribe(
@@ -58,7 +146,7 @@ func (l *runtimeEventLogger) handle(_ context.Context, evt runtimeevents.Event) 
 	}
 
 	fields := runtimeEventLogFields(evt)
-	if l.cfg.IncludePayload && evt.Payload != nil {
+	if l.configSnapshot().IncludePayload && evt.Payload != nil {
 		fields["payload"] = evt.Payload
 	}
 
@@ -67,18 +155,22 @@ func (l *runtimeEventLogger) handle(_ context.Context, evt runtimeevents.Event) 
 }
 
 func (l *runtimeEventLogger) shouldLog(evt runtimeevents.Event) bool {
-	if l == nil || !l.cfg.Enabled {
+	if l == nil {
 		return false
 	}
-	if runtimeEventSeverityRank(evt.Severity) < runtimeEventSeverityRank(parseRuntimeEventSeverity(l.cfg.MinSeverity)) {
+	cfg := l.configSnapshot()
+	if !cfg.Enabled {
+		return false
+	}
+	if runtimeEventSeverityRank(evt.Severity) < runtimeEventSeverityRank(parseRuntimeEventSeverity(cfg.MinSeverity)) {
 		return false
 	}
 
 	kind := evt.Kind.String()
-	if !matchAnyRuntimeEventPattern(l.cfg.Include, kind, true) {
+	if !matchAnyRuntimeEventPattern(cfg.Include, kind, true) {
 		return false
 	}
-	return !matchAnyRuntimeEventPattern(l.cfg.Exclude, kind, false)
+	return !matchAnyRuntimeEventPattern(cfg.Exclude, kind, false)
 }
 
 func logRuntimeEvent(evt runtimeevents.Event, fields map[string]any) {

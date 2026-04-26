@@ -41,6 +41,8 @@ type AgentLoop struct {
 	// Runtime event system
 	runtimeEvents      runtimeevents.Bus
 	ownsRuntimeEvents  bool
+	runtimeEventLogMu  sync.RWMutex
+	runtimeEventLogger *runtimeEventLogger
 	runtimeEventLogSub runtimeevents.Subscription
 	hooks              *HookManager
 
@@ -286,9 +288,7 @@ func (al *AgentLoop) Close() {
 	if al.hooks != nil {
 		al.hooks.Close()
 	}
-	if al.runtimeEventLogSub != nil {
-		_ = al.runtimeEventLogSub.Close()
-	}
+	al.closeRuntimeEventLogger()
 	if al.runtimeEvents != nil && al.ownsRuntimeEvents {
 		if err := al.runtimeEvents.Close(); err != nil {
 			logger.ErrorCF("agent", "Failed to close runtime event bus",
@@ -387,6 +387,7 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 	al.fallback = providers.NewFallbackChain(providers.NewCooldownTracker(), newRL)
 
 	al.mu.Unlock()
+	al.refreshRuntimeEventLogger(cfg)
 
 	oldMCPManager := al.mcp.reset()
 	al.hookRuntime.reset(al)
