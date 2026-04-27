@@ -203,6 +203,9 @@ func TestMessageBusPublishesRuntimeFailureAndCloseEvents(t *testing.T) {
 		failed.Severity != runtimeevents.SeverityError {
 		t.Fatalf("publish failed event = %+v", failed)
 	}
+	if failed.Attrs["stream"] != "inbound" || failed.Attrs["error"] == "" {
+		t.Fatalf("publish failed attrs = %#v, want stream and error", failed.Attrs)
+	}
 
 	if err := mb.PublishOutbound(context.Background(), OutboundMessage{
 		Context: NewOutboundContext("telegram", "chat-1", ""),
@@ -213,9 +216,13 @@ func TestMessageBusPublishesRuntimeFailureAndCloseEvents(t *testing.T) {
 	mb.Close()
 
 	seen := map[runtimeevents.Kind]bool{}
+	var drainedAttrs map[string]any
 	for range 3 {
 		evt := receiveBusRuntimeEvent(t, eventsCh)
 		seen[evt.Kind] = true
+		if evt.Kind == runtimeevents.KindBusCloseDrained {
+			drainedAttrs = evt.Attrs
+		}
 	}
 	for _, kind := range []runtimeevents.Kind{
 		runtimeevents.KindBusCloseStarted,
@@ -225,6 +232,9 @@ func TestMessageBusPublishesRuntimeFailureAndCloseEvents(t *testing.T) {
 		if !seen[kind] {
 			t.Fatalf("missing %s event, seen=%v", kind, seen)
 		}
+	}
+	if drainedAttrs["drained"] != 1 {
+		t.Fatalf("bus close drained attrs = %#v, want drained count", drainedAttrs)
 	}
 }
 

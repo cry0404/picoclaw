@@ -102,6 +102,32 @@ func TestRuntimeEventLogFieldsSummarizeAgentPayload(t *testing.T) {
 	}
 }
 
+func TestRuntimeEventLogFieldsIncludeSafeAttrs(t *testing.T) {
+	fields := runtimeEventLogFields(runtimeevents.Event{
+		ID:       "evt-gateway",
+		Kind:     runtimeevents.KindGatewayReady,
+		Severity: runtimeevents.SeverityInfo,
+		Attrs: map[string]any{
+			"duration_ms": 42,
+			"error":       "startup failed",
+			"event_kind":  "conflict",
+		},
+	})
+
+	if fields["duration_ms"] != 42 || fields["error"] != "startup failed" {
+		t.Fatalf("missing safe attrs: %#v", fields)
+	}
+	if fields["event_kind"] != runtimeevents.KindGatewayReady.String() {
+		t.Fatalf("event_kind overwritten by attrs: %#v", fields)
+	}
+	if fields["attr_event_kind"] != "conflict" {
+		t.Fatalf("conflicting attr not preserved with prefix: %#v", fields)
+	}
+	if _, ok := fields["payload"]; ok {
+		t.Fatalf("raw payload should not be included by runtimeEventLogFields: %#v", fields)
+	}
+}
+
 func runtimeEventLoggerStateForTest(
 	al *AgentLoop,
 ) (*runtimeEventLogger, runtimeevents.Subscription) {

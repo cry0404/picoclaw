@@ -163,6 +163,8 @@ func TestProcessHookObserveKindsFromConfigAcceptsRuntimeNames(t *testing.T) {
 	kinds, enabled, err := processHookObserveKindsFromConfig([]string{
 		"tool_exec_start",
 		"agent.tool.exec_end",
+		"gateway.ready",
+		"mcp.server.failed",
 	})
 	if err != nil {
 		t.Fatalf("processHookObserveKindsFromConfig failed: %v", err)
@@ -171,7 +173,7 @@ func TestProcessHookObserveKindsFromConfigAcceptsRuntimeNames(t *testing.T) {
 		t.Fatal("expected observe to be enabled")
 	}
 
-	want := []string{"agent.tool.exec_start", "agent.tool.exec_end"}
+	want := []string{"agent.tool.exec_start", "agent.tool.exec_end", "gateway.ready", "mcp.server.failed"}
 	if !slices.Equal(kinds, want) {
 		t.Fatalf("observe kinds = %v, want %v", kinds, want)
 	}

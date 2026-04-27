@@ -14,6 +14,7 @@ var globalEventSeq atomic.Uint64
 // Bus publishes runtime events and creates filtered channels.
 type Bus interface {
 	Publish(ctx context.Context, evt Event) PublishResult
+	PublishNonBlocking(evt Event) PublishResult
 	Channel() EventChannel
 	Close() error
 	Stats() Stats
@@ -30,9 +31,10 @@ type PublishResult struct {
 
 // EventBus is an in-process runtime event broadcaster.
 type EventBus struct {
-	mu     sync.RWMutex
-	subs   map[uint64]*eventSubscription
-	closed bool
+	mu          sync.RWMutex
+	subs        map[uint64]*eventSubscription
+	orderedSubs []*eventSubscription
+	closed      bool
 
 	nextSubID atomic.Uint64
 	published atomic.Uint64
@@ -53,6 +55,15 @@ func NewBus() *EventBus {
 
 // Publish broadcasts evt to subscriptions whose filters match it.
 func (b *EventBus) Publish(ctx context.Context, evt Event) PublishResult {
+	return b.publish(ctx, evt, false)
+}
+
+// PublishNonBlocking broadcasts evt without waiting for subscriber queue capacity.
+func (b *EventBus) PublishNonBlocking(evt Event) PublishResult {
+	return b.publish(context.Background(), evt, true)
+}
+
+func (b *EventBus) publish(ctx context.Context, evt Event, nonBlocking bool) PublishResult {
 	if b == nil {
 		return PublishResult{Closed: true}
 	}
@@ -82,7 +93,7 @@ func (b *EventBus) Publish(ctx context.Context, evt Event) PublishResult {
 		result.Matched++
 		b.matched.Add(1)
 
-		delivery := sub.enqueue(ctx, evt)
+		delivery := sub.enqueue(ctx, evt, nonBlocking)
 		if delivery.closed {
 			continue
 		}
@@ -114,11 +125,9 @@ func (b *EventBus) Close() error {
 		return nil
 	}
 	b.closed = true
-	subs := make([]*eventSubscription, 0, len(b.subs))
-	for id, sub := range b.subs {
-		subs = append(subs, sub)
-		delete(b.subs, id)
-	}
+	subs := b.orderedSubs
+	b.subs = nil
+	b.orderedSubs = nil
 	b.mu.Unlock()
 
 	for _, sub := range subs {
@@ -135,13 +144,8 @@ func (b *EventBus) Stats() Stats {
 
 	b.mu.RLock()
 	closed := b.closed
-	subs := make([]*eventSubscription, 0, len(b.subs))
-	for _, sub := range b.subs {
-		subs = append(subs, sub)
-	}
+	subs := b.orderedSubs
 	b.mu.RUnlock()
-
-	sortSubscriptions(subs)
 
 	stats := Stats{
 		Published:       b.published.Load(),
@@ -180,6 +184,7 @@ func (b *EventBus) subscribe(
 		return nil, ErrBusClosed
 	}
 	b.subs[id] = sub
+	b.rebuildOrderedSubscribersLocked()
 	b.mu.Unlock()
 
 	if handler != nil {
@@ -194,6 +199,7 @@ func (b *EventBus) unsubscribe(id uint64) {
 	sub, ok := b.subs[id]
 	if ok {
 		delete(b.subs, id)
+		b.rebuildOrderedSubscribersLocked()
 	}
 	b.mu.Unlock()
 
@@ -210,12 +216,16 @@ func (b *EventBus) snapshotSubscribers() ([]*eventSubscription, bool) {
 		return nil, true
 	}
 
+	return b.orderedSubs, false
+}
+
+func (b *EventBus) rebuildOrderedSubscribersLocked() {
 	subs := make([]*eventSubscription, 0, len(b.subs))
 	for _, sub := range b.subs {
 		subs = append(subs, sub)
 	}
 	sortSubscriptions(subs)
-	return subs, false
+	b.orderedSubs = subs
 }
 
 func sortSubscriptions(subs []*eventSubscription) {

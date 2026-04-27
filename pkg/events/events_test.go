@@ -131,6 +131,105 @@ func TestBlockRespectsContext(t *testing.T) {
 	}
 }
 
+func TestPublishNonBlockingDropsForFullBlockSubscriber(t *testing.T) {
+	t.Parallel()
+
+	bus := NewBus()
+	defer closeBus(t, bus)
+
+	sub, _, err := bus.Channel().SubscribeChan(
+		context.Background(),
+		SubscribeOptions{Name: "block", Buffer: 1, Backpressure: Block},
+	)
+	if err != nil {
+		t.Fatalf("SubscribeChan failed: %v", err)
+	}
+
+	first := bus.PublishNonBlocking(Event{Kind: Kind("test.first")})
+	if first.Delivered != 1 {
+		t.Fatalf("first PublishNonBlocking = %+v, want one delivered event", first)
+	}
+
+	resultCh := make(chan PublishResult, 1)
+	go func() {
+		resultCh <- bus.PublishNonBlocking(Event{Kind: Kind("test.second")})
+	}()
+
+	select {
+	case second := <-resultCh:
+		if second.Matched != 1 || second.Delivered != 0 || second.Dropped != 1 || second.Blocked != 0 {
+			t.Fatalf("second PublishNonBlocking = %+v, want non-blocking drop", second)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("PublishNonBlocking blocked on full Block subscriber")
+	}
+
+	if got := sub.Stats().Dropped; got != 1 {
+		t.Fatalf("subscription dropped = %d, want 1", got)
+	}
+}
+
+func TestStatsSubscribersKeepPriorityOrder(t *testing.T) {
+	t.Parallel()
+
+	bus := NewBus()
+	defer closeBus(t, bus)
+
+	low, _, err := bus.Channel().SubscribeChan(
+		context.Background(),
+		SubscribeOptions{Name: "low", Priority: -1},
+	)
+	if err != nil {
+		t.Fatalf("SubscribeChan low failed: %v", err)
+	}
+	high, _, err := bus.Channel().SubscribeChan(
+		context.Background(),
+		SubscribeOptions{Name: "high", Priority: 10},
+	)
+	if err != nil {
+		t.Fatalf("SubscribeChan high failed: %v", err)
+	}
+	peer, _, err := bus.Channel().SubscribeChan(
+		context.Background(),
+		SubscribeOptions{Name: "peer", Priority: 10},
+	)
+	if err != nil {
+		t.Fatalf("SubscribeChan peer failed: %v", err)
+	}
+
+	stats := bus.Stats()
+	got := []string{
+		stats.SubscriberStats[0].Name,
+		stats.SubscriberStats[1].Name,
+		stats.SubscriberStats[2].Name,
+	}
+	want := []string{"high", "peer", "low"}
+	if got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Fatalf("subscriber order = %v, want %v", got, want)
+	}
+
+	if err := high.Close(); err != nil {
+		t.Fatalf("Close high failed: %v", err)
+	}
+
+	stats = bus.Stats()
+	got = []string{
+		stats.SubscriberStats[0].Name,
+		stats.SubscriberStats[1].Name,
+	}
+	want = []string{"peer", "low"}
+	if got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("subscriber order after unsubscribe = %v, want %v", got, want)
+	}
+
+	if err := peer.Close(); err != nil {
+		t.Fatalf("Close peer failed: %v", err)
+	}
+	if err := low.Close(); err != nil {
+		t.Fatalf("Close low failed: %v", err)
+	}
+}
+
 func receiveEvent(t *testing.T, ch <-chan Event) Event {
 	t.Helper()
 

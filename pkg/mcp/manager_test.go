@@ -300,6 +300,11 @@ func TestConnectServerPublishesRuntimeEvents(t *testing.T) {
 		connected.Severity != runtimeevents.SeverityInfo {
 		t.Fatalf("connected event = %+v", connected)
 	}
+	if connected.Attrs["server"] != "good" ||
+		connected.Attrs["type"] != "stdio" ||
+		connected.Attrs["tool_count"] != 1 {
+		t.Fatalf("connected attrs = %#v", connected.Attrs)
+	}
 
 	err = mgr.ConnectServer(context.Background(), "bad", config.MCPServerConfig{
 		Type:    "stdio",
@@ -313,6 +318,9 @@ func TestConnectServerPublishesRuntimeEvents(t *testing.T) {
 		failed.Source.Name != "bad" ||
 		failed.Severity != runtimeevents.SeverityError {
 		t.Fatalf("failed event = %+v", failed)
+	}
+	if failed.Attrs["server"] != "bad" || failed.Attrs["error"] != "connect failed" {
+		t.Fatalf("failed attrs = %#v", failed.Attrs)
 	}
 }
 

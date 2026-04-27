@@ -350,6 +350,11 @@ func TestMCPTool_Execute_PublishesRuntimeEvents(t *testing.T) {
 	if payload.Server != "github" || payload.Tool != "search_repos" || payload.IsError {
 		t.Fatalf("ended payload = %+v", payload)
 	}
+	if ended.Attrs["server"] != "github" ||
+		ended.Attrs["tool"] != "search_repos" ||
+		ended.Attrs["duration_ms"] == nil {
+		t.Fatalf("ended attrs = %#v", ended.Attrs)
+	}
 }
 
 func receiveMCPToolRuntimeEvent(t *testing.T, ch <-chan runtimeevents.Event) runtimeevents.Event {

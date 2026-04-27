@@ -185,6 +185,45 @@ func TestLockedHandlerProcessesSequentially(t *testing.T) {
 	}
 }
 
+func TestHandlerTimeoutDoesNotWedgeLockedSubscription(t *testing.T) {
+	t.Parallel()
+
+	bus := NewBus()
+	defer closeBus(t, bus)
+
+	releaseFirst := make(chan struct{})
+	defer close(releaseFirst)
+
+	var calls atomic.Uint64
+	sub, err := bus.Channel().Subscribe(
+		context.Background(),
+		SubscribeOptions{Name: "timeout", Buffer: 2, Concurrency: Locked, Timeout: 20 * time.Millisecond},
+		func(context.Context, Event) error {
+			if calls.Add(1) == 1 {
+				<-releaseFirst
+			}
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("Subscribe failed: %v", err)
+	}
+
+	bus.Publish(context.Background(), Event{Kind: Kind("test.first")})
+	waitForStat(t, func() uint64 {
+		return sub.Stats().TimedOut
+	}, 1)
+
+	bus.Publish(context.Background(), Event{Kind: Kind("test.second")})
+	waitForStat(t, func() uint64 {
+		return sub.Stats().Handled
+	}, 1)
+
+	if got := sub.Stats().Failed; got != 1 {
+		t.Fatalf("subscription failed = %d, want timeout failure", got)
+	}
+}
+
 func waitForSubscriptionDone(t *testing.T, sub Subscription) {
 	t.Helper()
 

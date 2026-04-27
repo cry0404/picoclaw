@@ -1,23 +1,13 @@
 package agent
 
-import (
-	"context"
-	"time"
-
-	runtimeevents "github.com/sipeed/picoclaw/pkg/events"
-)
-
-const runtimeEventPublishTimeout = 100 * time.Millisecond
+import runtimeevents "github.com/sipeed/picoclaw/pkg/events"
 
 func (al *AgentLoop) publishRuntimeEvent(evt runtimeevents.Event) {
 	if al == nil || al.runtimeEvents == nil {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), runtimeEventPublishTimeout)
-	defer cancel()
-
-	al.runtimeEvents.Publish(ctx, evt)
+	al.runtimeEvents.PublishNonBlocking(evt)
 }
 
 func runtimeScopeFromHookMeta(meta HookMeta, eventCtx *TurnContext) runtimeevents.Scope {

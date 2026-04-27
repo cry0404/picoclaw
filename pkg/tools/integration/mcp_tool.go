@@ -310,15 +310,29 @@ func (t *MCPTool) publishRuntimeEvent(
 		severity = runtimeevents.SeverityError
 	}
 
-	publishCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	t.runtimeEvents.Publish(publishCtx, runtimeevents.Event{
+	t.runtimeEvents.PublishNonBlocking(runtimeevents.Event{
 		Kind:     kind,
 		Source:   runtimeevents.Source{Component: "mcp", Name: t.serverName},
 		Scope:    scope,
 		Severity: severity,
 		Payload:  payload,
+		Attrs:    mcpToolCallEventAttrs(payload),
 	})
+}
+
+func mcpToolCallEventAttrs(payload MCPToolCallPayload) map[string]any {
+	attrs := map[string]any{
+		"server":      payload.Server,
+		"tool":        payload.Tool,
+		"duration_ms": payload.DurationMS,
+	}
+	if payload.IsError {
+		attrs["is_error"] = payload.IsError
+	}
+	if payload.Error != "" {
+		attrs["error"] = payload.Error
+	}
+	return attrs
 }
 
 // extractContentText extracts text from MCP content array

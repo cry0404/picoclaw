@@ -101,3 +101,56 @@ const (
 	// KindMCPToolCallEnd is emitted when an MCP tool call ends.
 	KindMCPToolCallEnd Kind = "mcp.tool.call.end"
 )
+
+var knownKinds = []Kind{
+	KindAgentTurnStart,
+	KindAgentTurnEnd,
+	KindAgentLLMRequest,
+	KindAgentLLMDelta,
+	KindAgentLLMResponse,
+	KindAgentLLMRetry,
+	KindAgentContextCompress,
+	KindAgentSessionSummarize,
+	KindAgentToolExecStart,
+	KindAgentToolExecEnd,
+	KindAgentToolExecSkipped,
+	KindAgentSteeringInjected,
+	KindAgentFollowUpQueued,
+	KindAgentInterruptReceived,
+	KindAgentSubTurnSpawn,
+	KindAgentSubTurnEnd,
+	KindAgentSubTurnResultDelivered,
+	KindAgentSubTurnOrphan,
+	KindAgentError,
+	KindChannelLifecycleStarted,
+	KindChannelLifecycleInitialized,
+	KindChannelLifecycleStartFailed,
+	KindChannelLifecycleStopped,
+	KindChannelWebhookRegistered,
+	KindChannelWebhookUnregistered,
+	KindChannelMessageOutboundQueued,
+	KindChannelMessageOutboundSent,
+	KindChannelMessageOutboundFailed,
+	KindChannelRateLimited,
+	KindBusPublishFailed,
+	KindBusCloseStarted,
+	KindBusCloseCompleted,
+	KindBusCloseDrained,
+	KindGatewayStart,
+	KindGatewayReady,
+	KindGatewayShutdown,
+	KindGatewayReloadStarted,
+	KindGatewayReloadCompleted,
+	KindGatewayReloadFailed,
+	KindMCPServerConnected,
+	KindMCPServerConnecting,
+	KindMCPServerFailed,
+	KindMCPToolDiscovered,
+	KindMCPToolCallStart,
+	KindMCPToolCallEnd,
+}
+
+// KnownKinds returns the runtime event kinds declared by this package.
+func KnownKinds() []Kind {
+	return append([]Kind(nil), knownKinds...)
+}

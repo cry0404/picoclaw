@@ -28,8 +28,11 @@ type SubscribeOptions struct {
 	Priority     int
 	Concurrency  ConcurrencyKind
 	Backpressure BackpressurePolicy
-	Timeout      time.Duration
-	PanicPolicy  PanicPolicy
+	// Timeout bounds how long the subscription worker waits for one handler call.
+	// Handlers should still honor ctx cancellation; timed-out calls keep running
+	// until their handler returns.
+	Timeout     time.Duration
+	PanicPolicy PanicPolicy
 }
 
 // ConcurrencyKind controls how handler subscriptions process queued events.
@@ -105,6 +108,11 @@ type eventSubscription struct {
 	blockWG   sync.WaitGroup
 
 	counters subscriberCounters
+}
+
+type handlerResult struct {
+	err      error
+	panicked bool
 }
 
 func normalizeSubscribeOptions(opts SubscribeOptions) SubscribeOptions {
@@ -234,26 +242,54 @@ func (s *eventSubscription) handle(ctx context.Context, evt Event) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if s.opts.Timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, s.opts.Timeout)
-		defer cancel()
+
+	if s.opts.Timeout <= 0 {
+		s.recordHandlerResult(ctx, s.invokeHandler(ctx, evt))
+		return
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, s.opts.Timeout)
+	defer cancel()
+
+	done := make(chan handlerResult, 1)
+	go func() {
+		done <- s.invokeHandler(ctx, evt)
+	}()
+
+	select {
+	case result := <-done:
+		s.recordHandlerResult(ctx, result)
+	case <-ctx.Done():
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			s.counters.timedOut.Add(1)
+		}
+		s.counters.failed.Add(1)
+	}
+}
+
+func (s *eventSubscription) invokeHandler(ctx context.Context, evt Event) (result handlerResult) {
 	if s.opts.PanicPolicy != Crash {
 		defer func() {
 			if recovered := recover(); recovered != nil {
 				s.counters.panicked.Add(1)
+				result.panicked = true
 				log.Printf("events: subscriber %q recovered panic: %v", s.name, recovered)
 			}
 		}()
 	}
 
-	err := s.handler(ctx, evt)
+	result.err = s.handler(ctx, evt)
+	return result
+}
+
+func (s *eventSubscription) recordHandlerResult(ctx context.Context, result handlerResult) {
+	if result.panicked {
+		return
+	}
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		s.counters.timedOut.Add(1)
 	}
-	if err != nil {
+	if result.err != nil {
 		s.counters.failed.Add(1)
 		return
 	}
@@ -303,9 +339,13 @@ type deliveryResult struct {
 	closed    bool
 }
 
-func (s *eventSubscription) enqueue(ctx context.Context, evt Event) deliveryResult {
+func (s *eventSubscription) enqueue(ctx context.Context, evt Event, nonBlocking bool) deliveryResult {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+
+	if nonBlocking {
+		return s.enqueueNonBlocking(evt)
 	}
 
 	if s.opts.Backpressure == Block {
@@ -341,6 +381,21 @@ func (s *eventSubscription) enqueueBlocking(ctx context.Context, evt Event) deli
 
 	defer s.blockWG.Done()
 	return s.enqueueBlock(ctx, evt)
+}
+
+func (s *eventSubscription) enqueueNonBlocking(evt Event) deliveryResult {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.closed {
+		return deliveryResult{closed: true}
+	}
+
+	s.counters.received.Add(1)
+	if s.opts.Backpressure == DropOldest {
+		return s.enqueueDropOldest(evt)
+	}
+	return s.enqueueDropNewest(evt)
 }
 
 func (s *eventSubscription) enqueueDropNewest(evt Event) deliveryResult {

@@ -1,13 +1,8 @@
 package bus
 
 import (
-	"context"
-	"time"
-
 	runtimeevents "github.com/sipeed/picoclaw/pkg/events"
 )
-
-const busEventPublishTimeout = 100 * time.Millisecond
 
 type busPublishFailedPayload struct {
 	Stream string `json:"stream"`
@@ -27,9 +22,7 @@ func (mb *MessageBus) publishFailure(stream string, scope runtimeevents.Scope, e
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), busEventPublishTimeout)
-	defer cancel()
-	publisher.Publish(ctx, runtimeevents.Event{
+	publisher.PublishNonBlocking(runtimeevents.Event{
 		Kind:     runtimeevents.KindBusPublishFailed,
 		Source:   runtimeevents.Source{Component: "bus", Name: stream},
 		Scope:    scope,
@@ -37,6 +30,10 @@ func (mb *MessageBus) publishFailure(stream string, scope runtimeevents.Scope, e
 		Payload: busPublishFailedPayload{
 			Stream: stream,
 			Error:  err.Error(),
+		},
+		Attrs: map[string]any{
+			"stream": stream,
+			"error":  err.Error(),
 		},
 	})
 }
@@ -50,13 +47,16 @@ func (mb *MessageBus) publishCloseEvent(kind runtimeevents.Kind, drained int) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), busEventPublishTimeout)
-	defer cancel()
-	publisher.Publish(ctx, runtimeevents.Event{
+	attrs := map[string]any{}
+	if drained > 0 {
+		attrs["drained"] = drained
+	}
+	publisher.PublishNonBlocking(runtimeevents.Event{
 		Kind:     kind,
 		Source:   runtimeevents.Source{Component: "bus"},
 		Severity: runtimeevents.SeverityInfo,
 		Payload:  busClosePayload{Drained: drained},
+		Attrs:    attrs,
 	})
 }
 

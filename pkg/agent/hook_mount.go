@@ -311,27 +311,7 @@ func processHookObserveKindsFromConfig(observe []string) ([]string, bool, error)
 }
 
 func validHookEventKinds() map[string]string {
-	runtimeKinds := []runtimeevents.Kind{
-		runtimeevents.KindAgentTurnStart,
-		runtimeevents.KindAgentTurnEnd,
-		runtimeevents.KindAgentLLMRequest,
-		runtimeevents.KindAgentLLMDelta,
-		runtimeevents.KindAgentLLMResponse,
-		runtimeevents.KindAgentLLMRetry,
-		runtimeevents.KindAgentContextCompress,
-		runtimeevents.KindAgentSessionSummarize,
-		runtimeevents.KindAgentToolExecStart,
-		runtimeevents.KindAgentToolExecEnd,
-		runtimeevents.KindAgentToolExecSkipped,
-		runtimeevents.KindAgentSteeringInjected,
-		runtimeevents.KindAgentFollowUpQueued,
-		runtimeevents.KindAgentInterruptReceived,
-		runtimeevents.KindAgentSubTurnSpawn,
-		runtimeevents.KindAgentSubTurnEnd,
-		runtimeevents.KindAgentSubTurnResultDelivered,
-		runtimeevents.KindAgentSubTurnOrphan,
-		runtimeevents.KindAgentError,
-	}
+	runtimeKinds := runtimeevents.KnownKinds()
 	kinds := make(map[string]string, len(runtimeKinds)*2)
 	for _, kind := range runtimeKinds {
 		kinds[kind.String()] = kind.String()

@@ -380,6 +380,9 @@ func TestSendWithRetryPublishesOutboundRuntimeEvents(t *testing.T) {
 	if sent.Kind != runtimeevents.KindChannelMessageOutboundSent || sent.Scope.ChatID != "chat-1" {
 		t.Fatalf("sent event = %+v", sent)
 	}
+	if sent.Attrs["content_len"] != 5 {
+		t.Fatalf("sent attrs = %#v, want content_len", sent.Attrs)
+	}
 
 	failWorker := &channelWorker{
 		ch: &mockChannel{
@@ -401,6 +404,9 @@ func TestSendWithRetryPublishesOutboundRuntimeEvents(t *testing.T) {
 	}
 	if failed.Severity != runtimeevents.SeverityError {
 		t.Fatalf("failed severity = %q", failed.Severity)
+	}
+	if failed.Attrs["error"] == "" || failed.Attrs["retries"] != maxRetries {
+		t.Fatalf("failed attrs = %#v, want error and retries", failed.Attrs)
 	}
 }
 

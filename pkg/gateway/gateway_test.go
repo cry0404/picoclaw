@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -158,6 +159,42 @@ func TestPublishGatewayEvent(t *testing.T) {
 	}
 	if payload.DurationMS <= 0 {
 		t.Fatalf("DurationMS = %d, want positive", payload.DurationMS)
+	}
+	if evt.Attrs["duration_ms"] == nil {
+		t.Fatalf("gateway event attrs missing duration_ms: %#v", evt.Attrs)
+	}
+}
+
+func TestShutdownGatewayClosesMessageBus(t *testing.T) {
+	msgBus := bus.NewMessageBus()
+	al := agent.NewAgentLoop(
+		config.DefaultConfig(),
+		msgBus,
+		&startupBlockedProvider{reason: "not used"},
+	)
+	msgBus.SetEventPublisher(al.RuntimeEventBus())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sub, eventsCh, err := al.RuntimeEventBus().Channel().OfKind(runtimeevents.KindBusCloseCompleted).SubscribeChan(
+		ctx,
+		runtimeevents.SubscribeOptions{Name: "bus-close-test", Buffer: 4},
+	)
+	if err != nil {
+		t.Fatalf("SubscribeChan() error = %v", err)
+	}
+	defer func() {
+		_ = sub.Close()
+	}()
+
+	shutdownGateway(&services{}, al, &startupBlockedProvider{reason: "not used"}, msgBus, true)
+
+	evt := receiveGatewayRuntimeEvent(t, eventsCh)
+	if evt.Kind != runtimeevents.KindBusCloseCompleted {
+		t.Fatalf("shutdown event kind = %q, want %q", evt.Kind, runtimeevents.KindBusCloseCompleted)
+	}
+	if err := msgBus.PublishVoiceControl(context.Background(), bus.VoiceControl{}); !errors.Is(err, bus.ErrBusClosed) {
+		t.Fatalf("PublishVoiceControl after shutdown error = %v, want %v", err, bus.ErrBusClosed)
 	}
 }
 

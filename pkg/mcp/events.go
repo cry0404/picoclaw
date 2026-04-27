@@ -1,14 +1,9 @@
 package mcp
 
 import (
-	"context"
-	"time"
-
 	"github.com/sipeed/picoclaw/pkg/config"
 	runtimeevents "github.com/sipeed/picoclaw/pkg/events"
 )
-
-const mcpEventPublishTimeout = 100 * time.Millisecond
 
 func (m *Manager) publishServerEvent(
 	kind runtimeevents.Kind,
@@ -36,13 +31,12 @@ func (m *Manager) publishServerEvent(
 		payload.Error = err.Error()
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), mcpEventPublishTimeout)
-	defer cancel()
-	m.runtimeEvents.Publish(ctx, runtimeevents.Event{
+	m.runtimeEvents.PublishNonBlocking(runtimeevents.Event{
 		Kind:     kind,
 		Source:   runtimeevents.Source{Component: "mcp", Name: serverName},
 		Severity: severity,
 		Payload:  payload,
+		Attrs:    mcpServerEventAttrs(payload),
 	})
 }
 
@@ -57,14 +51,31 @@ func (m *Manager) publishToolDiscovered(serverName string, cfg config.MCPServerC
 		Command: cfg.Command,
 		Tool:    toolName,
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), mcpEventPublishTimeout)
-	defer cancel()
-	m.runtimeEvents.Publish(ctx, runtimeevents.Event{
+	m.runtimeEvents.PublishNonBlocking(runtimeevents.Event{
 		Kind:     runtimeevents.KindMCPToolDiscovered,
 		Source:   runtimeevents.Source{Component: "mcp", Name: serverName},
 		Severity: runtimeevents.SeverityInfo,
 		Payload:  payload,
+		Attrs:    mcpServerEventAttrs(payload),
 	})
+}
+
+func mcpServerEventAttrs(payload ServerEventPayload) map[string]any {
+	attrs := map[string]any{}
+	setMCPAttrString(attrs, "server", payload.Server)
+	setMCPAttrString(attrs, "type", payload.Type)
+	setMCPAttrString(attrs, "tool", payload.Tool)
+	if payload.ToolCount > 0 {
+		attrs["tool_count"] = payload.ToolCount
+	}
+	setMCPAttrString(attrs, "error", payload.Error)
+	return attrs
+}
+
+func setMCPAttrString(attrs map[string]any, key, value string) {
+	if value != "" {
+		attrs[key] = value
+	}
 }
 
 func mcpTransportType(cfg config.MCPServerConfig) string {

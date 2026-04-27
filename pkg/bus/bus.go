@@ -55,6 +55,7 @@ type MessageBus struct {
 // EventPublisher is the minimal runtime event publisher used by MessageBus.
 type EventPublisher interface {
 	Publish(ctx context.Context, evt runtimeevents.Event) runtimeevents.PublishResult
+	PublishNonBlocking(evt runtimeevents.Event) runtimeevents.PublishResult
 }
 
 func NewMessageBus() *MessageBus {

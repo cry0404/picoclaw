@@ -1,14 +1,9 @@
 package channels
 
 import (
-	"context"
-	"time"
-
 	"github.com/sipeed/picoclaw/pkg/bus"
 	runtimeevents "github.com/sipeed/picoclaw/pkg/events"
 )
-
-const channelEventPublishTimeout = 100 * time.Millisecond
 
 func channelTypeForEvent(m *Manager, channelName string) string {
 	if m == nil || m.config == nil {
@@ -33,15 +28,49 @@ func (m *Manager) publishChannelEvent(
 	if scope.Channel == "" {
 		scope.Channel = channelName
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), channelEventPublishTimeout)
-	defer cancel()
-	m.runtimeEvents.Publish(ctx, runtimeevents.Event{
+	m.runtimeEvents.PublishNonBlocking(runtimeevents.Event{
 		Kind:     kind,
 		Source:   runtimeevents.Source{Component: "channel", Name: channelName},
 		Scope:    scope,
 		Severity: severity,
 		Payload:  payload,
+		Attrs:    channelEventAttrs(payload),
 	})
+}
+
+func channelEventAttrs(payload any) map[string]any {
+	switch payload := payload.(type) {
+	case ChannelLifecyclePayload:
+		attrs := map[string]any{}
+		setAttrString(attrs, "type", payload.Type)
+		setAttrString(attrs, "error", payload.Error)
+		return attrs
+	case ChannelOutboundPayload:
+		attrs := map[string]any{}
+		if payload.Media {
+			attrs["media"] = payload.Media
+		}
+		if payload.ContentLen > 0 {
+			attrs["content_len"] = payload.ContentLen
+		}
+		if len(payload.MessageIDs) > 0 {
+			attrs["message_ids_count"] = len(payload.MessageIDs)
+		}
+		setAttrString(attrs, "reply_to_message_id", payload.ReplyToMessageID)
+		setAttrString(attrs, "error", payload.Error)
+		if payload.Retries > 0 {
+			attrs["retries"] = payload.Retries
+		}
+		return attrs
+	default:
+		return nil
+	}
+}
+
+func setAttrString(attrs map[string]any, key, value string) {
+	if value != "" {
+		attrs[key] = value
+	}
 }
 
 func (m *Manager) publishOutboundSent(

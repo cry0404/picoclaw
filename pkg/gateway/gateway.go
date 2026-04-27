@@ -267,7 +267,7 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) (runEr
 		select {
 		case <-sigChan:
 			logger.Info("Shutting down...")
-			shutdownGateway(runningServices, agentLoop, provider, true)
+			shutdownGateway(runningServices, agentLoop, provider, msgBus, true)
 			return nil
 		case newCfg := <-configReloadChan:
 			if !runningServices.reloading.CompareAndSwap(false, true) {
@@ -510,6 +510,7 @@ func shutdownGateway(
 	runningServices *services,
 	agentLoop *agent.AgentLoop,
 	provider providers.LLMProvider,
+	msgBus *bus.MessageBus,
 	fullShutdown bool,
 ) {
 	publishGatewayEvent(agentLoop, runtimeevents.KindGatewayShutdown, time.Time{}, nil)
@@ -519,6 +520,10 @@ func shutdownGateway(
 	}
 
 	stopAndCleanupServices(runningServices, gracefulShutdownTimeout, false)
+
+	if fullShutdown && msgBus != nil {
+		msgBus.Close()
+	}
 
 	agentLoop.Stop()
 	agentLoop.Close()
