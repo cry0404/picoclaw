@@ -343,6 +343,7 @@ Lệnh này tạo `~/.picoclaw/config.json` và thư mục workspace.
 
 ```json
 {
+  "version": 3,
   "agents": {
     "defaults": {
       "model_name": "gpt-5.4"
@@ -352,7 +353,7 @@ Lệnh này tạo `~/.picoclaw/config.json` và thư mục workspace.
     {
       "model_name": "gpt-5.4",
       "model": "openai/gpt-5.4",
-      "api_key": "sk-your-api-key"
+      "api_keys": ["sk-your-api-key"]
     }
   ]
 }
