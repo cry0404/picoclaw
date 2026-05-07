@@ -8,6 +8,7 @@ services:
       - .:/src
     working_dir: /src
     environment:
+      PATH: "/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
       PICOCLAW_MCP_REAL_SERVER_JSON: >-
         {"enabled":true,"type":"http","url":"http://mcp-streamable-server:8080/mcp"}
       PICOCLAW_MCP_REAL_TOOL_NAME: echo
