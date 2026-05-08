@@ -532,8 +532,8 @@ func (c *LINEChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMessag
 			To:       msg.ChatID,
 			Messages: []messaging_api.MessageInterface{&textMsg},
 		}, "")
-		if err != nil {
-			return nil, classifySDKError(resp, err)
+		if sdkErr := classifySDKError(resp, err); sdkErr != nil {
+			return nil, sdkErr
 		}
 	}
 
